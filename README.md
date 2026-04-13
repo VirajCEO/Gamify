@@ -485,6 +485,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 - [Ollama](https://ollama.com) — local LLM inference
 - [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) — on-device speech recognition
-- [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) — open-weight TTS model
-- [Silero VAD](https://github.com/snakers4/silero-vad) — voice activity detection
 - [pystray](https://github.com/moses-palmer/pystray) — system tray integration
