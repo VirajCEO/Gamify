@@ -40,14 +40,6 @@ Everything runs on your machine. No cloud. No subscriptions. No data leaving you
 - Auto-opens the dashboard in your default browser on launch.
 - "Open Dashboard" and "Quit" tray menu items.
 
-### Voice Bot *(bonus module)*
-- Separate real-time voice assistant powered by local STT + LLM + TTS.
-- **Speech-to-Text**: [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) with SenseVoice (multilingual) and Dolphin (Hindi).
-- **LLM**: Ollama (`llama3.1:8b`).
-- **Text-to-Speech**: [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) — English, Japanese, Hindi.
-- Silero VAD for accurate speech segmentation.
-- Streamed audio playback chunk-by-chunk for minimal latency.
-
 ---
 
 ## Tech Stack
@@ -58,9 +50,6 @@ Everything runs on your machine. No cloud. No subscriptions. No data leaving you
 | Database | SQLite (via `sqlite3`, WAL mode) |
 | LLM | [Ollama](https://ollama.com) (`llama3.1:8b`) |
 | Real-time sync | Server-Sent Events (SSE) |
-| Voice STT | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) |
-| Voice TTS | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) |
-| Voice transport | Flask-SocketIO (WebSocket) |
 | System tray | pystray + Pillow |
 | Frontend | Vanilla JS, HTML5, CSS (no framework) |
 
