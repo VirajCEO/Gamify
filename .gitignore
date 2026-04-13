@@ -4,9 +4,6 @@ levelup.db
 # Uploaded profile photos
 static/uploads
 
-# Voice bot STT model files (large binaries — download separately, see README)
-STT/models/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -36,6 +33,3 @@ desktop.ini
 
 # Temp / test files
 gemmatest.html
-STT/models/*.tar.bz2
-STT/models/*.wav
-TTS/

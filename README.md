@@ -40,14 +40,6 @@ Everything runs on your machine. No cloud. No subscriptions. No data leaving you
 - Auto-opens the dashboard in your default browser on launch.
 - "Open Dashboard" and "Quit" tray menu items.
 
-### Voice Bot *(bonus module)*
-- Separate real-time voice assistant powered by local STT + LLM + TTS.
-- **Speech-to-Text**: [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) with SenseVoice (multilingual) and Dolphin (Hindi).
-- **LLM**: Ollama (`llama3.1:8b`).
-- **Text-to-Speech**: [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) — English, Japanese, Hindi.
-- Silero VAD for accurate speech segmentation.
-- Streamed audio playback chunk-by-chunk for minimal latency.
-
 ---
 
 ## Tech Stack
@@ -58,9 +50,6 @@ Everything runs on your machine. No cloud. No subscriptions. No data leaving you
 | Database | SQLite (via `sqlite3`, WAL mode) |
 | LLM | [Ollama](https://ollama.com) (`llama3.1:8b`) |
 | Real-time sync | Server-Sent Events (SSE) |
-| Voice STT | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) |
-| Voice TTS | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) |
-| Voice transport | Flask-SocketIO (WebSocket) |
 | System tray | pystray + Pillow |
 | Frontend | Vanilla JS, HTML5, CSS (no framework) |
 
@@ -113,21 +102,6 @@ python app.py
 ```
 
 The app starts in the system tray and opens `http://localhost:5050` in your browser automatically.
-
----
-
-## requirements.txt
-
-Create this file in the project root if it doesn't exist:
-
-```
-flask>=3.0
-ollama>=0.6
-pystray>=0.19
-Pillow>=10.0
-```
-
-> **Voice Bot** has additional dependencies — see [Voice Bot Setup](#voice-bot-setup) below.
 
 ---
 
@@ -217,69 +191,16 @@ Click your avatar (top-left) to edit your profile, goals, persona, and profile p
 ```
 level-up-rpg/
 ├── app.py                      # Main Flask app — routes, DB, LLM, SSE, tray
-├── voice_bot.py                # Standalone voice assistant (port 5002)
 ├── Gamify_AutoStart.vbs        # Windows silent auto-start script
 ├── templates/
-│   ├── index.html              # Main dashboard (single-page app)
-│   └── voice_bot.html          # Voice bot UI
+│   └── index.html              # Main dashboard (single-page app)
 ├── static/
-│   └── uploads/                # User profile photos (git-ignored)
-├── STT/
-│   └── models/                 # sherpa-onnx model files (git-ignored, ~1 GB)
+│   └── uploads/                # User profile photos (git-ignored, auto-created)
 ├── levelup.db                  # SQLite database (git-ignored, auto-created)
 ├── requirements.txt
 ├── requirements.md             # Original design spec
 └── README.md
 ```
-
----
-
-## Voice Bot Setup
-
-The voice bot is a separate Flask-SocketIO server (`voice_bot.py`, port 5002). It requires additional model files that must be downloaded manually.
-
-### 1. Install extra dependencies
-
-```bash
-pip install flask-socketio sherpa-onnx kokoro soundfile numpy unidic-lite
-```
-
-### 2. Download STT models
-
-Place models inside `STT/models/`:
-
-| Model | Language | Download |
-|---|---|---|
-| `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17` | EN / JA | [k2-fsa releases](https://github.com/k2-fsa/sherpa-onnx/releases) |
-| `sherpa-onnx-dolphin-base-ctc-multi-lang-int8-2025-04-02` | HI / Multi | [k2-fsa releases](https://github.com/k2-fsa/sherpa-onnx/releases) |
-| `silero_vad.onnx` | VAD | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) |
-
-Expected structure:
-```
-STT/models/
-├── sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/
-│   ├── model.int8.onnx
-│   └── tokens.txt
-├── sherpa-onnx-dolphin-base-ctc-multi-lang-int8-2025-04-02/
-│   ├── model.int8.onnx
-│   └── tokens.txt
-└── silero_vad.onnx
-```
-
-### 3. Run the voice bot
-
-```bash
-python voice_bot.py
-# Opens at http://localhost:5002
-```
-
-### Supported Languages
-
-| Code | Language | STT Engine | TTS Voice |
-|---|---|---|---|
-| `en` | English | SenseVoice | Kokoro `af_heart` |
-| `ja` | Japanese | SenseVoice | Kokoro `jf_alpha` |
-| `hi` | Hindi | Dolphin CTC | Kokoro `hf_alpha` |
 
 ---
 
@@ -390,43 +311,9 @@ There is no config file yet — key values live at the top of `app.py`:
 | Variable | Default | Description |
 |---|---|---|
 | `DB_PATH` | `levelup.db` (next to app.py) | SQLite database location |
-| `UPLOAD_DIR` | `static/uploads/` | Profile photo storage |
+| `UPLOAD_DIR` | `static/uploads/` | Profile photo storage (auto-created) |
 | `ENERGY_COSTS` | `INT:12, DEX:10, CHA:6, VIT:-15` | HP drain per 100 XP |
 | Port | `5050` | Flask server port (last line of `app.py`) |
-
----
-
-## .gitignore
-
-Create a `.gitignore` in the project root:
-
-```gitignore
-# Database
-levelup.db
-
-# Uploaded profile photos
-static/uploads/
-
-# STT model files (large binaries, download separately)
-STT/models/
-TTS/models/
-
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-venv/
-.venv/
-*.egg-info/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-```
 
 ---
 
@@ -464,7 +351,6 @@ if __name__ == "__main__":
 
 ## Roadmap
 
-- [ ] `requirements.txt` + proper packaging
 - [ ] Config file (`.env` or `config.toml`) for port, model, energy costs
 - [ ] AI-generated weekly title ("The Silicon Architect", "The Relentless Executor")
 - [ ] Mobile-responsive layout
@@ -484,5 +370,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 ## Acknowledgements
 
 - [Ollama](https://ollama.com) — local LLM inference
-- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) — on-device speech recognition
 - [pystray](https://github.com/moses-palmer/pystray) — system tray integration
