@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice-to-Voice AI Agent</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow-x: hidden;
+            padding: 20px;
+        }
+
+        .header { text-align: center; margin-bottom: 20px; }
+        .header h1 {
+            font-size: 2rem;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+
+        select {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 1rem;
+            outline: none;
+        }
+
+        .btn-mic {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-mic.recording {
+            background: #ef4444;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        .chat-container {
+            width: 100%;
+            max-width: 600px;
+            height: 60vh;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .bubble {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            font-size: 1rem;
+            line-height: 1.4;
+            opacity: 0;
+            animation: fadeIn 0.3s forwards;
+        }
+
+        @keyframes fadeIn { to { opacity: 1; } }
+
+        .bubble.user {
+            background: #3b82f6;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .bubble.ai {
+            background: #2a2a2a;
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        .status-bar {
+            margin-top: 15px;
+            color: #888;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Voice-to-Voice Agent</h1>
+        <p style="color: #666; margin-top:5px;">Instant Audio with Llama 3.1 & Kokoro</p>
+    </div>
+
+    <div class="controls">
+        <select id="langSelect">
+            {% for code, lang in languages.items() %}
+            <option value="{{ code }}" {% if code == 'en' %}selected{% endif %}>{{ lang.name }}</option>
+            {% endfor %}
+        </select>
+        <button id="micBtn" class="btn-mic">Start Microphone</button>
+    </div>
+
+    <div class="chat-container" id="chat">
+        <div class="bubble ai">Hello! I am your AI. Give me mic access and say hi!</div>
+    </div>
+    
+    <div class="status-bar" id="status">Disconnected.</div>
+
+    <script>
+        const socket = io();
+        const chat = document.getElementById('chat');
+        const status = document.getElementById('status');
+        const micBtn = document.getElementById('micBtn');
+        const langSelect = document.getElementById('langSelect');
+
+        let audioContext = null;
+        let scriptProcessor = null;
+        let mediaStream = null;
+        let isRecording = false;
+
+        let activeUserBubble = null;
+        let activeAiBubble = null;
+
+        // TTS Queue
+        let audioQueue = [];
+        let isPlaying = false;
+        let currentAudioSource = null;
+        let ttsCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        socket.on('connect', () => { status.textContent = 'Connected. Ready to listen.'; });
+        socket.on('disconnect', () => { status.textContent = 'Disconnected from Server.'; stopRecording(); });
+
+        langSelect.addEventListener('change', () => {
+            socket.emit('set_language', { lang: langSelect.value });
+        });
+
+        // ----------------------------------------------------
+        // UI Helpers
+        // ----------------------------------------------------
+        function getOrCreateUserBubble() {
+            if (!activeUserBubble) {
+                activeUserBubble = document.createElement('div');
+                activeUserBubble.className = 'bubble user';
+                chat.appendChild(activeUserBubble);
+                chat.scrollTop = chat.scrollHeight;
+            }
+            return activeUserBubble;
+        }
+
+        function getOrCreateAiBubble() {
+            if (!activeAiBubble) {
+                activeAiBubble = document.createElement('div');
+                activeAiBubble.className = 'bubble ai';
+                chat.appendChild(activeAiBubble);
+                chat.scrollTop = chat.scrollHeight;
+            }
+            return activeAiBubble;
+        }
+
+        // ----------------------------------------------------
+        // Sockets Input (STT -> LLM)
+        // ----------------------------------------------------
+        socket.on('stt_partial', (data) => {
+            getOrCreateUserBubble().textContent = data.text + '...';
+        });
+
+        socket.on('stt_final', (data) => {
+            getOrCreateUserBubble().textContent = data.text;
+            activeUserBubble = null; // Next speech gets a new bubble
+        });
+
+        socket.on('ai_status', (data) => {
+            if (data.status === 'thinking') {
+                status.textContent = 'AI is thinking...';
+            } else if (data.status === 'idle') {
+                status.textContent = 'Connected. Ready to listen.';
+                activeAiBubble = null; // Prepare for next response
+            } else if (data.status === 'error') {
+                status.textContent = 'AI Error: ' + data.error;
+            }
+        });
+
+        socket.on('ai_partial', (data) => {
+            let b = getOrCreateAiBubble();
+            b.textContent += data.text + " ";
+            chat.scrollTop = chat.scrollHeight;
+        });
+
+        // ----------------------------------------------------
+        // Sockets Audio (TTS out)
+        // ----------------------------------------------------
+        socket.on('tts_chunk', (data) => {
+            const binary = atob(data.audio);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            
+            audioQueue.push(bytes.buffer);
+            if (!isPlaying) {
+                if(ttsCtx.state === 'suspended') ttsCtx.resume();
+                playNext();
+            }
+        });
+
+        async function playNext() {
+            if (audioQueue.length === 0) {
+                isPlaying = false;
+                return;
+            }
+            isPlaying = true;
+            const buf = audioQueue.shift();
+            try {
+                const audioBuffer = await ttsCtx.decodeAudioData(buf);
+                const source = ttsCtx.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(ttsCtx.destination);
+                currentAudioSource = source;
+
+                source.onended = () => {
+                    currentAudioSource = null;
+                    playNext();
+                };
+                source.start(0);
+            } catch(e) {
+                console.error('TTS playback error:', e);
+                playNext();
+            }
+        }
+
+        // ----------------------------------------------------
+        // Microphone Logic
+        // ----------------------------------------------------
+        async function startRecording() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 16000 } });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                
+                scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                source.connect(scriptProcessor);
+                scriptProcessor.connect(audioContext.destination);
+
+                scriptProcessor.onaudioprocess = (e) => {
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    socket.emit('audio', inputData.buffer); // Send raw float32 array buffer
+                };
+
+                isRecording = true;
+                micBtn.textContent = 'Stop Microphone';
+                micBtn.classList.add('recording');
+                status.textContent = 'Listening...';
+            } catch (err) {
+                console.error(err);
+                alert("Microphone access denied or error occurred.");
+            }
+        }
+
+        function stopRecording() {
+            if (scriptProcessor) {
+                scriptProcessor.disconnect();
+                scriptProcessor = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(t => t.stop());
+                mediaStream = null;
+            }
+            isRecording = false;
+            micBtn.textContent = 'Start Microphone';
+            micBtn.classList.remove('recording');
+            status.textContent = 'Connected. Ready to listen.';
+        }
+
+        micBtn.addEventListener('click', () => {
+            if (isRecording) stopRecording();
+            else startRecording();
+        });
+    </script>
+</body>
+</html>

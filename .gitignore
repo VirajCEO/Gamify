@@ -1,0 +1,41 @@
+# Database (auto-created on first run)
+levelup.db
+
+# Uploaded profile photos
+static/uploads/
+
+# Voice bot STT model files (large binaries — download separately, see README)
+STT/models/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Temp / test files
+gemmatest.html
+STT/models/*.tar.bz2
+STT/models/*.wav
+TTS/
