@@ -1,6 +1,7 @@
 # Database (auto-created on first run)
 levelup.db
-
+levelup_heman.db
+leaderboard.db
 # Uploaded profile photos
 static/uploads
 
