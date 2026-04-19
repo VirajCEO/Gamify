@@ -1264,7 +1264,9 @@ async function openInventory(){
     }
     const grid=document.getElementById('inv-grid');
     if(!items.length){grid.innerHTML=`<div class="empty" style="padding:24px;font-size:.85rem;grid-column:1/-1">Your bag is empty. Visit the shop!</div>`;return}
-    grid.innerHTML=items.map(it=>`<div class="inv-item">
+    const shopItems=items.filter(it=>it.source!=='loot');
+    const trophies=items.filter(it=>it.source==='loot');
+    const renderShop=it=>`<div class="inv-item">
       <div class="inv-icon">${it.icon||'\ud83d\udce6'}</div>
       <div class="inv-name">${esc(it.name)}</div>
       <div class="inv-qty">\u00d7${it.quantity}</div>
@@ -1273,7 +1275,19 @@ async function openInventory(){
         <button class="inv-use" onclick="useItem('${it.item_key}')">Use</button>
         <button class="inv-gift" onclick="chooseGiftRecipient('${it.item_key}','${esc(it.name)}')">Gift</button>
       </div>
-    </div>`).join('');
+    </div>`;
+    const renderTrophy=it=>`<div class="inv-item inv-trophy" data-rarity="${esc(it.rarity||'common')}">
+      <div class="inv-icon">${it.icon||'\u2728'}</div>
+      <div class="inv-name">${esc(it.name)}</div>
+      <div class="inv-qty" style="background:var(--gold,#f5b041);color:#000">\u{1F3C6} ${esc(it.rarity||'')}</div>
+      <div class="inv-desc">${esc(it.description||'')}</div>
+    </div>`;
+    let html='';
+    html+=`<div class="inv-section-hdr" style="grid-column:1/-1;margin-top:4px;font-size:.8rem;font-weight:600;color:var(--text2);letter-spacing:.05em;text-transform:uppercase">\u{1F392} Items <span style="opacity:.6;font-weight:400">\u00b7 ${shopItems.length}</span></div>`;
+    html+=shopItems.length?shopItems.map(renderShop).join(''):`<div class="empty" style="padding:16px;font-size:.8rem;grid-column:1/-1;color:var(--text3)">No items. Visit the shop!</div>`;
+    html+=`<div class="inv-section-hdr" style="grid-column:1/-1;margin-top:16px;font-size:.8rem;font-weight:600;color:var(--text2);letter-spacing:.05em;text-transform:uppercase">\u{1F3C6} Trophies <span style="opacity:.6;font-weight:400">\u00b7 ${trophies.length}</span></div>`;
+    html+=trophies.length?trophies.map(renderTrophy).join(''):`<div class="empty" style="padding:16px;font-size:.8rem;grid-column:1/-1;color:var(--text3)">Complete quests to earn trophies.</div>`;
+    grid.innerHTML=html;
   }catch(e){console.error(e)}
 }
 function closeInventory(){document.getElementById('inv-drawer')?.classList.remove('open')}

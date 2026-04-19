@@ -1143,56 +1143,59 @@ RULES:
 Respond ONLY with valid JSON: {"milestones":[{"description":"...","xp":1500,"stat":"INT"},...]}"""
 
 GM_BRAINSTORM_DAILY = """You are the Game Master for a productivity RPG called LEVEL UP.
-The user has given you a SPECIFIC focus for today. Generate quests EXCLUSIVELY around that focus.
+The user has listed one or more specific tasks/topics for today. Generate quests for EACH listed item.
 
 RULES:
-- The user's stated focus is the ONLY theme. DO NOT invent unrelated tasks. If they say "pushups", don't add marketing, coding, reading, etc.
-- Generate the minimum number of tasks that fulfills their request:
-  * If they describe ONE specific task, return exactly 1.
-  * If they describe a small progression or a theme, return 2-4.
-  * NEVER exceed 5.
+- The user's input may be a COMMA-SEPARATED LIST of distinct tasks — treat each comma-separated item as a SEPARATE quest topic. Do NOT collapse them into one.
+- Generate exactly ONE quest per distinct comma-separated item. If they list 4 topics, generate 4 quests. If they list 1 topic, generate 1 quest. NEVER generate fewer quests than items listed.
+- Maximum 6 quests total. If no commas, treat the whole input as one theme and return 1-3 quests based on complexity.
 - REFERENCE RESOLUTION: if the user's focus uses words like "missed", "didn't finish", "failed", "incomplete", "leftover", "redo", "yesterday's missed", "what I skipped", "the ones I missed" — you MUST draw the task descriptions from the MISSED FROM PRIOR DAYS list provided. Re-phrase them as fresh actionable quests for TODAY (e.g. a missed "Write outline for blog" becomes a new daily quest "Write outline for blog (retry)"). Do not invent new themes.
 - If the user says "continue" or "follow up", draw from RECENTLY COMPLETED to extend what they already did.
-- Use previous tasks ONLY as continuity reference within the same theme (e.g., "day 2 pushups" extends prior pushup work). DO NOT import unrelated themes from prior days unless the user asked.
+- Use previous tasks ONLY as continuity reference within the same theme. DO NOT import unrelated themes from prior days unless the user asked.
 - Assign XP 50-500 based on difficulty. Assign ONE stat: INT/DEX/CHA/VIT.
   INT=thinking/coding/research, DEX=hands-on/building, CHA=social/communication, VIT=health/exercise.
 - Assign timer_minutes (10-120).
 Respond ONLY with valid JSON: {"quests":[{"description":"...","xp":100,"stat":"DEX","timer_minutes":30},...]}"""
 
 GM_BRAINSTORM_WEEKLY = """You are the Game Master for a productivity RPG called LEVEL UP.
-The user has given you a SPECIFIC focus for this week. Generate goals EXCLUSIVELY around that focus.
+The user has listed one or more specific goals/topics for this week. Generate weekly goals for EACH listed item.
 
 RULES:
-- The user's stated focus is the ONLY theme. DO NOT invent unrelated goals.
-- Generate the minimum number of goals that fulfills their request:
-  * If they describe ONE specific goal, return exactly 1.
-  * If they describe a broader theme, return 2-3.
-  * NEVER exceed 4.
+- The user's input may be a COMMA-SEPARATED LIST — treat each comma-separated item as a SEPARATE weekly goal. Do NOT collapse them into one.
+- Generate exactly ONE goal per distinct comma-separated item. If they list 3 topics, generate 3 goals. Maximum 5 goals total.
+- If no commas, treat the whole input as one theme and return 1-2 goals.
 - Use past weekly goals ONLY as continuity reference within the same theme.
 - Assign XP 300-1500. Assign ONE stat: INT/DEX/CHA/VIT.
 Respond ONLY with valid JSON: {"goals":[{"description":"...","xp":500,"stat":"INT"},...]}"""
 
 GM_BRAINSTORM_MONTHLY = """You are the Game Master for a productivity RPG called LEVEL UP.
-The user has given you a SPECIFIC focus for this month. Generate milestones EXCLUSIVELY around that focus.
+The user has listed one or more specific outcomes/topics for this month. Generate milestones for EACH listed item.
 
 RULES:
-- The user's stated focus is the ONLY theme. DO NOT invent unrelated milestones.
-- Generate the minimum number of milestones that fulfills their request:
-  * If they describe ONE specific outcome, return exactly 1.
-  * If they describe a broader theme, return 2-3.
-  * NEVER exceed 3.
+- The user's input may be a COMMA-SEPARATED LIST — treat each comma-separated item as a SEPARATE milestone. Do NOT collapse them into one.
+- Generate exactly ONE milestone per distinct comma-separated item. If they list 4 topics, generate 4 milestones. Maximum 6 milestones total.
+- If no commas, treat the whole input as one theme and return 1-2 milestones.
 - Assign XP 1000-3000. Assign ONE stat: INT/DEX/CHA/VIT.
 Respond ONLY with valid JSON: {"milestones":[{"description":"...","xp":1500,"stat":"INT"},...]}"""
 
 def _llm(system, prompt, fallback):
     try:
-        r = ollama.chat(model='qwen3.5:9b',
+        r = ollama.chat(model='gemma4:e4b',
                         messages=[{"role":"system","content":system},{"role":"user","content":prompt}],
                         format="json",
                         think=False)
-        return json.loads(r["message"]["content"])
+        raw = (r["message"]["content"] or "").strip()
+        # Strip markdown fences (```json ... ``` or ``` ... ```) that some models emit despite format=json
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+        # Fallback: extract the first {...} block if there's extra prose
+        if not raw.startswith("{"):
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            if m: raw = m.group(0)
+        return json.loads(raw)
     except Exception as e:
-        print(f"[LLM] {e}"); return fallback
+        print(f"[LLM] {type(e).__name__}: {e}"); return fallback
 
 def recent_task_context(c, task_type, days=7):
     """Return (missed, recent_done) dicts keyed by short date strings, for LLM context."""
@@ -1230,7 +1233,8 @@ Otherwise generate ONLY tasks that progress the user's stated focus."""
             {"description":intent,"xp":150,"stat":"INT","timer_minutes":30}
         ]})
     else:
-        prompt = f"""User profile:
+        prompt = f"""Today: {date.today().strftime('%A, %B %d %Y')}
+User profile:
 Name: {user.get('display_name') or 'User'}
 Persona: {p['name']} — {p['desc']}
 Profession: {user.get('profession') or 'Not specified'}
@@ -1240,8 +1244,11 @@ Monthly Goal: {user['monthly_goal'] or 'Not set'}
 Weekly Goal: {user['weekly_goal'] or 'Not set'}
 Level: {user['level']}, Streak: {user['streak']} days
 Stats: INT={user['int_xp']} DEX={user['dex_xp']} CHA={user['cha_xp']} VIT={user['vit_xp']}
-Pending yesterday: {json.dumps([t['description'] for t in pending]) if pending else 'None'}
-Completed today: {json.dumps([t['description'] for t in completed]) if completed else 'None'}"""
+Missed from prior days: {_fmt_task_list(missed)}
+Recently completed (prior days): {_fmt_task_list(recent_done)}
+Pending from yesterday: {json.dumps([t['description'] for t in pending]) if pending else 'None'}
+Completed today: {json.dumps([t['description'] for t in completed]) if completed else 'None'}
+Generate 4 FRESH quests different from any missed or recently completed tasks above. Vary themes across profession, weekly goal, and physical health."""
         d = _llm(GM_DAILY, prompt, {"quests":[
             {"description":"Review your weekly goal and plan next steps","xp":100,"stat":"INT","timer_minutes":25},
             {"description":"Take a 20-minute walk or stretch session","xp":80,"stat":"VIT","timer_minutes":20},
@@ -1670,6 +1677,16 @@ def api_complete(tid):
     # Award pet XP (pet gains ~10% of the quest's final XP)
     pet_xp_gain = max(1, final_xp // 10)
     pet_level_up = award_pet_xp(c, pet_xp_gain)
+    # Auto-heal pet on quest completion: replenish hunger + happiness so it stays alive
+    # while the user is active. Gains scale with quest XP.
+    p_cur = c.execute("SELECT hatched, hunger, happiness FROM pet WHERE id=1").fetchone()
+    if p_cur and p_cur["hatched"]:
+        heal = max(8, min(25, final_xp // 20))
+        joy  = max(5, min(20, final_xp // 25))
+        new_hunger = min(100, (p_cur["hunger"] or 0) + heal)
+        new_happy  = min(100, (p_cur["happiness"] or 0) + joy)
+        c.execute("UPDATE pet SET hunger=?, happiness=?, last_fed=datetime('now','localtime') WHERE id=1",
+                  (new_hunger, new_happy))
 
     leveled, lv, new_unlocks, new_title = check_level_up(c)
     level_up_gems = 0
@@ -1885,7 +1902,14 @@ def api_inventory_use():
     d = request.get_json(silent=True) or {}
     key = d.get("item_key") or ""
     meta = SHOP_ITEMS.get(key)
-    if not meta: return jsonify({"error":"Unknown item"}), 400
+    if not meta:
+        # Loot items are trophies — their effect was applied on drop. Check the loot table.
+        c = get_db()
+        loot_row = c.execute("SELECT id, name, rarity FROM loot WHERE name=? ORDER BY earned_at DESC LIMIT 1", (key,)).fetchone()
+        c.close()
+        if loot_row:
+            return jsonify({"error": f"{loot_row['name']} is a trophy — its bonus was already granted when you found it. Keep it as proof of your victory."}), 400
+        return jsonify({"error":"Unknown item"}), 400
     c = get_db()
     existing = c.execute("SELECT quantity FROM inventory WHERE item_key=?", (key,)).fetchone()
     if not existing or existing["quantity"] <= 0:
