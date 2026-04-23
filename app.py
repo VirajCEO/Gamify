@@ -333,6 +333,11 @@ def _run_schema(c):
             content TEXT NOT NULL,
             generated_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        CREATE TABLE IF NOT EXISTS daily_summaries (
+            day TEXT PRIMARY KEY,
+            summary TEXT NOT NULL,
+            generated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
     """)
     if c.execute("SELECT COUNT(*) FROM user").fetchone()[0] == 0:
         c.execute("INSERT INTO user (id) VALUES (1)")
@@ -1059,10 +1064,10 @@ def get_shop_rotation():
     """Pick today's 8-item rotation. Always includes mystery boxes + pet food."""
     today = date.today().isoformat()
     rng = _rand.Random(int(today.replace("-","")))
-    always = ["mystery_common", "mystery_rare", "pet_food"]
+    always = ["mystery_common", "mystery_rare", "pet_food", "energy_potion"]
     optional = [k for k in SHOP_ITEMS if k not in always]
     rng.shuffle(optional)
-    return always + optional[:5]
+    return always + optional[:4]
 
 def open_mystery_box(c, key):
     """Roll a mystery box reward. Returns reward dict."""
@@ -1197,6 +1202,57 @@ def _llm(system, prompt, fallback):
     except Exception as e:
         print(f"[LLM] {type(e).__name__}: {e}"); return fallback
 
+GM_DAY_SUMMARIZER = """You are a terse summarizer for a productivity RPG.
+Summarize the user's day in 20 words or fewer. One compact line, no preamble, no bullet points.
+Capture: dominant theme, what progressed, what stalled. Skip filler words.
+Respond ONLY with valid JSON: {"summary":"..."}"""
+
+def _generate_day_summary(c, day_iso):
+    """Generate a terse AI summary of a given day's tasks. Stores & returns it."""
+    rows = c.execute(
+        "SELECT description, status, stat, xp_value FROM tasks "
+        "WHERE task_type='daily' AND date(created_at)=? ORDER BY id", (day_iso,)).fetchall()
+    if not rows:
+        summary = "No quests logged."
+    else:
+        done = [r["description"] for r in rows if r["status"] == "done"]
+        failed = [r["description"] for r in rows if r["status"] == "failed"]
+        pending = [r["description"] for r in rows if r["status"] == "pending"]
+        prompt = (f"Date: {day_iso}\n"
+                  f"Completed ({len(done)}): {json.dumps(done) if done else 'none'}\n"
+                  f"Failed ({len(failed)}): {json.dumps(failed) if failed else 'none'}\n"
+                  f"Unfinished ({len(pending)}): {json.dumps(pending) if pending else 'none'}")
+        d = _llm(GM_DAY_SUMMARIZER, prompt, {"summary": f"{len(done)} done, {len(failed)} missed, {len(pending)} unfinished."})
+        summary = (d.get("summary") or "").strip() or f"{len(done)} done, {len(failed)} missed."
+        # Hard-cap summary length so prompts stay tiny
+        if len(summary) > 200: summary = summary[:197].rstrip() + "..."
+    c.execute("INSERT OR REPLACE INTO daily_summaries (day, summary, generated_at) VALUES (?,?,datetime('now','localtime'))",
+              (day_iso, summary))
+    c.commit()
+    return summary
+
+def ensure_recent_summaries(c, days=3):
+    """Generate any missing per-day summaries for the last `days` days (excluding today).
+    Runs lazily: only fills gaps, cached forever otherwise."""
+    today = date.today()
+    for i in range(1, days + 1):
+        d = (today - timedelta(days=i)).isoformat()
+        existing = c.execute("SELECT summary FROM daily_summaries WHERE day=?", (d,)).fetchone()
+        if existing: continue
+        _generate_day_summary(c, d)
+
+def get_recent_context_summary(c, days=3):
+    """Return a short multiline context string: one line per recent day."""
+    ensure_recent_summaries(c, days)
+    today = date.today()
+    lines = []
+    for i in range(1, days + 1):
+        d = (today - timedelta(days=i)).isoformat()
+        row = c.execute("SELECT summary FROM daily_summaries WHERE day=?", (d,)).fetchone()
+        if row and row["summary"]:
+            lines.append(f"- {d}: {row['summary']}")
+    return "\n".join(lines) if lines else "No recent activity."
+
 def recent_task_context(c, task_type, days=7):
     """Return (missed, recent_done) dicts keyed by short date strings, for LLM context."""
     cutoff = (date.today() - timedelta(days=days)).isoformat()
@@ -1218,9 +1274,14 @@ def generate_daily(user, pending, completed, intent="", missed=None, recent_done
     p = PERSONAS.get(user["persona"], PERSONAS["operator"])
     missed = missed or []; recent_done = recent_done or []
     if intent:
+        c_tmp = get_db()
+        context_summary = get_recent_context_summary(c_tmp, days=3)
+        c_tmp.close()
         prompt = f"""User focus for today: '{intent}'
 Persona: {p['name']} ({p['desc']})
 Profession: {user.get('profession') or 'Not specified'}
+Past 3 days (AI summary):
+{context_summary}
 MISSED FROM PRIOR DAYS (failed, not completed): {_fmt_task_list(missed)}
 RECENTLY COMPLETED (prior days): {_fmt_task_list(recent_done)}
 Pending from yesterday: {json.dumps([t['description'] for t in pending]) if pending else 'None'}
@@ -1233,6 +1294,9 @@ Otherwise generate ONLY tasks that progress the user's stated focus."""
             {"description":intent,"xp":150,"stat":"INT","timer_minutes":30}
         ]})
     else:
+        c_tmp = get_db()
+        context_summary = get_recent_context_summary(c_tmp, days=3)
+        c_tmp.close()
         prompt = f"""Today: {date.today().strftime('%A, %B %d %Y')}
 User profile:
 Name: {user.get('display_name') or 'User'}
@@ -1244,11 +1308,10 @@ Monthly Goal: {user['monthly_goal'] or 'Not set'}
 Weekly Goal: {user['weekly_goal'] or 'Not set'}
 Level: {user['level']}, Streak: {user['streak']} days
 Stats: INT={user['int_xp']} DEX={user['dex_xp']} CHA={user['cha_xp']} VIT={user['vit_xp']}
-Missed from prior days: {_fmt_task_list(missed)}
-Recently completed (prior days): {_fmt_task_list(recent_done)}
-Pending from yesterday: {json.dumps([t['description'] for t in pending]) if pending else 'None'}
+Past 3 days (AI summary):
+{context_summary}
 Completed today: {json.dumps([t['description'] for t in completed]) if completed else 'None'}
-Generate 4 FRESH quests different from any missed or recently completed tasks above. Vary themes across profession, weekly goal, and physical health."""
+Generate 4 FRESH quests. Build on unfinished themes from the past 3 days but do NOT repeat completed work. Vary themes across profession, weekly goal, and physical health."""
         d = _llm(GM_DAILY, prompt, {"quests":[
             {"description":"Review your weekly goal and plan next steps","xp":100,"stat":"INT","timer_minutes":25},
             {"description":"Take a 20-minute walk or stretch session","xp":80,"stat":"VIT","timer_minutes":20},
@@ -1464,13 +1527,14 @@ def api_history():
         "SELECT * FROM tasks WHERE task_type='weekly' AND date(created_at)<? ORDER BY created_at DESC",(week_start,)).fetchall()]
     past_monthly = [dict(r) for r in c.execute(
         "SELECT * FROM tasks WHERE task_type='monthly' AND date(created_at)<? ORDER BY created_at DESC",(month_start,)).fetchall()]
+    summaries = {r["day"]: r["summary"] for r in c.execute("SELECT day, summary FROM daily_summaries").fetchall()}
     c.close()
 
     by_date = {}
     for t in past_daily:
         d = t.pop("d",""); t.pop("task_date",None)
         if not d: continue
-        by_date.setdefault(d, {"date":d,"tasks":[],"xp":0,"completed":0,"total":0})
+        by_date.setdefault(d, {"date":d,"tasks":[],"xp":0,"completed":0,"total":0,"summary":summaries.get(d,"")})
         by_date[d]["tasks"].append(t); by_date[d]["total"] += 1
         if t["status"] == "done":
             by_date[d]["xp"] += t["xp_value"]; by_date[d]["completed"] += 1
@@ -2300,10 +2364,34 @@ def create_image():
     d.rectangle([(26, 32), (38, 52)], fill=(124, 58, 237))
     return image
 
+def _startup_generate_summaries():
+    """Run once on script start: ensure the last 3 days have AI summaries for every profile DB.
+    Skips silently if Ollama is unreachable or no DBs exist yet."""
+    try:
+        import glob
+        db_files = glob.glob(os.path.join(BASE_DIR, "levelup*.db"))
+        for db_file in db_files:
+            try:
+                with sqlite3.connect(db_file) as conn:
+                    conn.row_factory = sqlite3.Row
+                    # Table may not exist yet on an older DB
+                    conn.execute("""CREATE TABLE IF NOT EXISTS daily_summaries (
+                        day TEXT PRIMARY KEY, summary TEXT NOT NULL,
+                        generated_at TEXT DEFAULT (datetime('now','localtime')))""")
+                    ensure_recent_summaries(conn, days=3)
+                    print(f"[STARTUP] summaries ready for {os.path.basename(db_file)}")
+            except Exception as e:
+                print(f"[STARTUP] skipped {os.path.basename(db_file)}: {e}")
+    except Exception as e:
+        print(f"[STARTUP] summary generation skipped: {e}")
+
 if __name__ == "__main__":
     print("[LEVEL UP] starting in system tray... http://localhost:5050")
     # Start flask silently in a background daemon thread
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=5050, debug=False, use_reloader=False, threaded=True), daemon=True).start()
+    # Generate any missing day-summaries for the last 3 days in a background thread
+    # (runs once at startup; does nothing on days already summarized, so it acts as a "new day" trigger)
+    threading.Thread(target=_startup_generate_summaries, daemon=True).start()
     
     # Auto-open browser on startup
     webbrowser.open("http://localhost:5050")

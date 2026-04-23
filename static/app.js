@@ -877,6 +877,7 @@ async function loadHistory(){
           ${t.status==='done'?`<span style="font-size:.65rem;color:var(--gold)">+${t.xp_value} XP</span>`:`<span style="font-size:.65rem;color:var(--danger)">missed</span>`}
         </div>
       </div>`).join('');
+    const summary = day.summary ? `<div class="hd-summary" style="padding:8px 12px;margin:0 0 6px;font-size:.75rem;color:var(--text2);background:var(--card2,rgba(255,255,255,.03));border-left:3px solid var(--accent);border-radius:4px;line-height:1.4">&#10024; ${esc(day.summary)}</div>` : '';
     return `<div class="hist-day">
       <div class="hist-day-hdr" onclick="this.parentElement.classList.toggle('expanded')">
         <div class="hd-left"><div class="date">${dateLabel}</div><div class="stats">${day.completed}/${day.total} completed</div></div>
@@ -885,7 +886,7 @@ async function loadHistory(){
           <span class="expand-arrow">&#9660;</span>
         </div>
       </div>
-      <div class="hist-day-body">${tasks}</div>
+      <div class="hist-day-body">${summary}${tasks}</div>
     </div>`;
   }).join('');
 
